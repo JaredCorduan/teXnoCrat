@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Command line utility to search and append bibtex citations."""
+
+import argparse
+import requests
+
+
+#######################
+### Google Book API ###
+#######################
+
+GOOGLE_URL = 'https://www.googleapis.com/books/v1/volumes'
+
+
+def google_preview(item):
+    """Prepare a match to be viewed by the user."""
+    vi = item['volumeInfo']
+    title = vi['title']
+    authors = ', '.join(vi.get('authors', []))
+    thumbnail = vi.get('imageLinks', {}).get('smallThumbnail', '')
+    return f'{title}\n{authors}\n{thumbnail}'
+
+
+def get_isbn_from_google(industry_identifiers):
+    """
+    Attempt to retrieve an ISBN from a book match.
+    Prefer ISBN 13 over ISBN 10.
+    """
+    isbn_10 = ''
+    isbn_13 = None
+    for ii in industry_identifiers:
+        if ii['type'] == 'ISBN_13':
+            isbn_13 = ii['identifier']
+        elif ii['type'] == 'ISBN_10':
+            isbn_10 = ii['identifier']
+    return isbn_13 if isbn_13 else isbn_10
+
+
+def google_to_bibtex(item, citekey):
+    """Convert a match to a bibtex entry."""
+    vi = item['volumeInfo']
+    title = vi['title']
+    authors = ' and '.join(vi.get('authors', []))
+    year = vi.get('publishedDate', '?')[:4]
+    publisher = vi.get('publisher', '?')
+    isbn = get_isbn_from_google(vi['industryIdentifiers'])
+    fmt = f'''@book{{{citekey},
+     title = "{title}",
+    author = "{authors}",
+      isbn = "{isbn}",
+      year = "{year}",
+ publisher = "{publisher}"
+}}'''
+    return fmt
+
+
+def search_google(args):
+    """Search the google book api with a list of words."""
+    words = '+'.join(args.words)
+    url = f'{GOOGLE_URL}?q={words}t&maxResults={args.max}'
+
+    resp = requests.get(url, timeout=10)
+    items = resp.json()['items']
+    citation = posit(items, google_preview, google_to_bibtex, needs_citekey=True)
+    append_to_bib(args, citation)
+
+
+############################
+### Semantic Scholar API ###
+############################
+
+SEMANTIC_SCHOLAR_URL = 'https://api.semanticscholar.org/graph/v1/paper'
+
+
+def semantic_scholar_preview(item):
+    """Prepare one match to be viewed by the user."""
+    paper = item['paperId']
+    query_fields = 'fields=title,authors,tldr'
+    url = f'{SEMANTIC_SCHOLAR_URL}/{paper}?{query_fields}'
+    resp = requests.get(url, timeout=10).json()
+    title = resp['title']
+    authors = resp['authors']
+    tldr = (resp.get('tldr', {}) or {}).get('text')
+    return f'{title}\n{authors}\n{tldr}'
+
+
+def semantic_scholar_to_bibtex(item, _citekey):
+    """Convert a match to a bibtex entry."""
+    paper = item['paperId']
+    query_fields = 'fields=citationStyles'
+    url = f'{SEMANTIC_SCHOLAR_URL}/{paper}?{query_fields}'
+    resp = requests.get(url, timeout=10).json()
+    return resp['citationStyles']['bibtex']
+
+
+def search_semantic_scholar(args):
+    """Search the google book api with a list of words."""
+    words = '+'.join(args.words)
+    url = f'{SEMANTIC_SCHOLAR_URL}/search?query={words}'
+    resp = requests.get(url, timeout=10)
+    items = resp.json()['data']
+    citation = posit(items, semantic_scholar_preview, semantic_scholar_to_bibtex)
+    append_to_bib(args, citation)
+
+
+#####################
+### bibsearch CLI ###
+#####################
+
+
+def posit(entries, preview, to_bibtex, needs_citekey=False):
+    """
+    Display a series of match to the user.
+    If the user selects a match, return it as a bibtex entry.
+    """
+    for entry in entries:
+        print('----')
+        print(preview(entry))
+        print('')
+        accept = input('accept (y/n)?')
+        if accept == 'y':
+            citekey = input('enter citekey:') if needs_citekey else None
+            return to_bibtex(entry, citekey)
+    return None
+
+
+def append_to_bib(args, citation):
+    """Append a bibtex entry to the bib file."""
+    if citation:
+        with open(args.bibfile, mode='a', encoding='ascii') as f:
+            f.write('\n\n')
+            f.write(citation)
+        print(f"wrote to {args.bibfile}")
+    else:
+        print("nothing was updated")
+
+
+parser = argparse.ArgumentParser(description='Manage a bibtex file.')
+parser.add_argument('-b', '--bibfile', default='notes.bib', help='bibtex file path')
+subparsers = parser.add_subparsers(help='sub-command help')
+
+parser_google = subparsers.add_parser('google', help='google book api')
+parser_google.add_argument('words', nargs='+', help='search words')
+parser_google.add_argument('-m', '--max', default=10, help='max results')
+parser_google.set_defaults(func=search_google)
+
+parser_semantic = subparsers.add_parser('semantic', help='semantic scholar api')
+parser_semantic.add_argument('words', nargs='+', help='search words')
+parser_semantic.set_defaults(func=search_semantic_scholar)
+
+xs = parser.parse_args()
+if hasattr(xs, "func"):
+    xs.func(xs)
+else:
+    parser.print_help()
