@@ -1,0 +1,40 @@
+\documentclass{report}
+
+% packages
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{fontawesome}
+\usepackage{makeidx}
+\usepackage{hyperref}
+\usepackage{cleveref} % Note: must be loaded after hyperref
+
+% custom packages
+\usepackage{envs}
+\usepackage{commands}
+
+% SETUP
+\makeindex
+\hypersetup{
+    colorlinks,
+    citecolor=black,
+    filecolor=black,
+    linkcolor=linkcolor,
+    urlcolor=black
+}
+
+\begin{document}
+
+\title{Higitus Figitus}
+\author{Merlin}
+\date{}
+\maketitle
+
+\tableofcontents
+
+\include{body}
+
+\bibliography{notes}
+\bibliographystyle{plain}
+
+\printindex
+\end{document}
